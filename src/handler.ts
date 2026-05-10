@@ -2,8 +2,15 @@ import type { SayFn } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import type { ActivityData, PendingState, Period } from './types';
 import {
-  getOrCreateCanvas, readCanvas, writeCanvas,
-  parse, ensureMonth, findNum, nextNum, countActivity, toYYYYMM,
+  getOrCreateCanvas,
+  readCanvas,
+  writeCanvas,
+  parse,
+  ensureMonth,
+  findNum,
+  nextNum,
+  countActivity,
+  toYYYYMM,
 } from './canvas';
 
 export const pending = new Map<string, PendingState>();
@@ -14,7 +21,9 @@ interface Context {
   say: SayFn;
 }
 
-// ── メインエントリー ──────────────────────────
+// ────────────────────────────────────────────
+// メインエントリー
+// ────────────────────────────────────────────
 
 export async function handleMessage({ message, client, say }: Context): Promise<void> {
   const text = message.text?.trim();
@@ -36,7 +45,9 @@ export async function handleMessage({ message, client, say }: Context): Promise<
   await say('「筋トレしたよ」のように記録するか、「今月見せて」で確認できます。');
 }
 
-// ── 記録 ────────────────────────────────────
+// ────────────────────────────────────────────
+// 記録
+// ────────────────────────────────────────────
 
 async function handleRecord({ activityName, channelId, userId, client, say }: {
   activityName: string; channelId: string; userId: string; client: WebClient; say: SayFn;
@@ -68,7 +79,9 @@ async function handleRecord({ activityName, channelId, userId, client, say }: {
   await saveRecord({ data, num, canvasId, activityName, client, say });
 }
 
-// ── はい ────────────────────────────────────
+// ────────────────────────────────────────────
+// はい
+// ────────────────────────────────────────────
 
 export async function handleYes({ body, client, say }: {
   body: any; client: WebClient; say: SayFn;
@@ -88,7 +101,9 @@ export async function handleYes({ body, client, say }: {
   await saveRecord({ data, num, canvasId: state.canvasId, activityName: state.activityName, client, say });
 }
 
-// ── いいえ ───────────────────────────────────
+// ────────────────────────────────────────────
+// いいえ
+// ────────────────────────────────────────────
 
 export async function handleNo({ body, say }: {
   body: any; say: SayFn;
@@ -97,19 +112,21 @@ export async function handleNo({ body, say }: {
   await say('キャンセルしました。');
 }
 
-// ── Canvas書き込み＆返信 ─────────────────────
+// ────────────────────────────────────────────
+// Canvas書き込み＆返信
+// ────────────────────────────────────────────
 
 export async function saveRecord({ data, num, canvasId, activityName, client, say }: {
   data: ActivityData; num: string; canvasId: string; activityName: string; client: WebClient; say: SayFn;
 }): Promise<void> {
   const today = new Date();
   const yyyymm = toYYYYMM(today);
-  const dayIndex = today.getDate() - 1;
+  const day = today.getDate();
 
   ensureMonth(data, yyyymm);
 
-  const cell = data.records[yyyymm][dayIndex];
-  data.records[yyyymm][dayIndex] = cell === '-' ? num : cell + num;
+  const existing = data.records[yyyymm][day] ?? '';
+  data.records[yyyymm][day] = existing ? existing + num : num;
 
   await writeCanvas(client, canvasId, data);
 
@@ -117,7 +134,9 @@ export async function saveRecord({ data, num, canvasId, activityName, client, sa
   await say(`✅ *${activityName}* を記録しました！（今月${count}回目）`);
 }
 
-// ── 閲覧 ────────────────────────────────────
+// ────────────────────────────────────────────
+// 閲覧
+// ────────────────────────────────────────────
 
 async function handleView({ text, channelId, client, say }: {
   text: string; channelId: string; client: WebClient; say: SayFn;
@@ -131,21 +150,20 @@ async function handleView({ text, channelId, client, say }: {
   let hasAny = false;
 
   for (const yyyymm of months) {
-    const cells = data.records[yyyymm];
-    if (!cells) continue;
+    const days = data.records[yyyymm];
+    if (!days) continue;
 
     const targets = targetNum
       ? [[targetNum, data.activities[targetNum]]]
       : Object.entries(data.activities);
 
     for (const [num, name] of targets) {
-      const days = cells
-        .map((c, i) => ({ c, d: i + 1 }))
-        .filter(({ c }) => c !== '-' && c.includes(num))
-        .map(({ d }) => `${d}日`);
+      const hitDays = Object.entries(days)
+        .filter(([, v]) => v.includes(num))
+        .map(([d]) => `${d}日`);
 
-      if (days.length > 0) {
-        lines.push(`・*${name}*：${days.length}回（${days.join(', ')}）`);
+      if (hitDays.length > 0) {
+        lines.push(`・*${name}*：${hitDays.length}回（${hitDays.join(', ')}）`);
         hasAny = true;
       }
     }
@@ -155,7 +173,9 @@ async function handleView({ text, channelId, client, say }: {
   await say(lines.join('\n'));
 }
 
-// ── ユーティリティ ───────────────────────────
+// ────────────────────────────────────────────
+// ユーティリティ
+// ────────────────────────────────────────────
 
 function isViewRequest(text: string): boolean {
   return /見せて|見せろ|確認|一覧|何回|何度/.test(text);
