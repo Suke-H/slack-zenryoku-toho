@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+
+# Terraform
+terraform/.terraform
+terraform/*.tfvars
+terraform/*.tfstate
+terraform/*.tfstate.*
