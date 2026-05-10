@@ -2,18 +2,11 @@ import type { SayFn } from '@slack/bolt';
 import type { WebClient } from '@slack/web-api';
 import type { ActivityData, PendingState, Period } from './types';
 import {
-  getOrCreateCanvas,
-  readCanvas,
-  writeCanvas,
-  parse,
-  ensureMonth,
-  findNum,
-  nextNum,
-  countActivity,
-  toYYYYMM,
+  getOrCreateCanvas, readCanvas, writeCanvas,
+  parse, ensureMonth, findNum, nextNum, countActivity, toYYYYMM,
 } from './canvas';
 
-const pending = new Map<string, PendingState>();
+export const pending = new Map<string, PendingState>();
 
 interface Context {
   message: { text?: string; user: string; channel: string; ts: string };
@@ -21,16 +14,13 @@ interface Context {
   say: SayFn;
 }
 
+// ── メインエントリー ──────────────────────────
+
 export async function handleMessage({ message, client, say }: Context): Promise<void> {
   const text = message.text?.trim();
   const userId = message.user;
   const channelId = message.channel;
   if (!text) return;
-
-  if (pending.has(userId)) {
-    await handlePending({ userId, text, client, say });
-    return;
-  }
 
   if (isViewRequest(text)) {
     await handleView({ text, channelId, client, say });
@@ -46,18 +36,10 @@ export async function handleMessage({ message, client, say }: Context): Promise<
   await say('「筋トレしたよ」のように記録するか、「今月見せて」で確認できます。');
 }
 
-async function handleRecord({
-  activityName,
-  channelId,
-  userId,
-  client,
-  say,
-}: {
-  activityName: string;
-  channelId: string;
-  userId: string;
-  client: WebClient;
-  say: SayFn;
+// ── 記録 ────────────────────────────────────
+
+async function handleRecord({ activityName, channelId, userId, client, say }: {
+  activityName: string; channelId: string; userId: string; client: WebClient; say: SayFn;
 }): Promise<void> {
   const canvasId = await getOrCreateCanvas(client, channelId);
   const data = parse(await readCanvas(client, canvasId));
@@ -69,7 +51,7 @@ async function handleRecord({
       blocks: [
         {
           type: 'section',
-          text: { type: 'mrkdwn', text: `*"${activityName}"* は新しい活動です。登録しますか？` },
+          text: { type: 'mrkdwn', text: `*"${activityName}"* は未登録の活動です。登録して記録しますか？` },
         },
         {
           type: 'actions',
@@ -86,20 +68,39 @@ async function handleRecord({
   await saveRecord({ data, num, canvasId, activityName, client, say });
 }
 
-async function saveRecord({
-  data,
-  num,
-  canvasId,
-  activityName,
-  client,
-  say,
-}: {
-  data: ActivityData;
-  num: string;
-  canvasId: string;
-  activityName: string;
-  client: WebClient;
-  say: SayFn;
+// ── はい ────────────────────────────────────
+
+export async function handleYes({ body, client, say }: {
+  body: any; client: WebClient; say: SayFn;
+}): Promise<void> {
+  const userId = body.user.id;
+  const state = pending.get(userId);
+  if (!state) {
+    await say('セッションが切れました。もう一度送ってください。');
+    return;
+  }
+  pending.delete(userId);
+
+  const data = parse(await readCanvas(client, state.canvasId));
+  const num = nextNum(data);
+  data.activities[num] = state.activityName;
+
+  await saveRecord({ data, num, canvasId: state.canvasId, activityName: state.activityName, client, say });
+}
+
+// ── いいえ ───────────────────────────────────
+
+export async function handleNo({ body, say }: {
+  body: any; say: SayFn;
+}): Promise<void> {
+  pending.delete(body.user.id);
+  await say('キャンセルしました。');
+}
+
+// ── Canvas書き込み＆返信 ─────────────────────
+
+export async function saveRecord({ data, num, canvasId, activityName, client, say }: {
+  data: ActivityData; num: string; canvasId: string; activityName: string; client: WebClient; say: SayFn;
 }): Promise<void> {
   const today = new Date();
   const yyyymm = toYYYYMM(today);
@@ -116,42 +117,10 @@ async function saveRecord({
   await say(`✅ *${activityName}* を記録しました！（今月${count}回目）`);
 }
 
-async function handlePending({
-  userId,
-  text,
-  client,
-  say,
-}: {
-  userId: string;
-  text: string;
-  client: WebClient;
-  say: SayFn;
-}): Promise<void> {
-  const state = pending.get(userId)!;
-  pending.delete(userId);
+// ── 閲覧 ────────────────────────────────────
 
-  if (!/^(はい|yes|y|うん|ok)$/i.test(text)) {
-    await say('キャンセルしました。');
-    return;
-  }
-
-  const data = parse(await readCanvas(client, state.canvasId));
-  const num = nextNum(data);
-  data.activities[num] = state.activityName;
-
-  await saveRecord({ data, num, canvasId: state.canvasId, activityName: state.activityName, client, say });
-}
-
-async function handleView({
-  text,
-  channelId,
-  client,
-  say,
-}: {
-  text: string;
-  channelId: string;
-  client: WebClient;
-  say: SayFn;
+async function handleView({ text, channelId, client, say }: {
+  text: string; channelId: string; client: WebClient; say: SayFn;
 }): Promise<void> {
   const canvasId = await getOrCreateCanvas(client, channelId);
   const data = parse(await readCanvas(client, canvasId));
@@ -186,6 +155,8 @@ async function handleView({
   await say(lines.join('\n'));
 }
 
+// ── ユーティリティ ───────────────────────────
+
 function isViewRequest(text: string): boolean {
   return /見せて|見せろ|確認|一覧|何回|何度/.test(text);
 }
@@ -209,9 +180,8 @@ function resolvePeriod(text: string): Period {
 
   const mMatch = text.match(/(\d{1,2})月/);
   if (mMatch) {
-    const month = parseInt(mMatch[1]);
-    const d = new Date(now.getFullYear(), month - 1, 1);
-    return { months: [toYYYYMM(d)], label: `${month}月` };
+    const d = new Date(now.getFullYear(), parseInt(mMatch[1]) - 1, 1);
+    return { months: [toYYYYMM(d)], label: `${parseInt(mMatch[1])}月` };
   }
 
   if (/先週/.test(text)) {
